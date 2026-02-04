@@ -1,0 +1,370 @@
+##########################################################################################################
+##    This script allows to plot the enrichment factor of the six enriched ASVs                         ##
+##    This script also allows to plot the ASV abundances depending on the disease incidence in fields   ##
+##########################################################################################################
+
+
+setwd("C:/[[YOUR PATH]]/Rice_field_microbiota_associated_with_blast_disease_from_Burkina_Faso")
+
+
+#### PACKAGES ####
+
+library("data.table")
+library("ggnewscale")
+library("ggpubr")
+library("ggtext")
+library("patchwork")
+library("tidyverse")
+
+library("GMPR") # Allows data normalisation
+library("metacoder") # Allows to calculate the enrichment factor and its significance
+library("TITAN2") # Allows to determine if the distribution of the ASV abundances along an environmental gradient is due to a random effect or not
+
+
+
+#### ENRICHMENT ANALYSIS ####
+
+Data <- read.csv("DATA/ASV_TABLE.csv", sep = ";", dec = ".", header = TRUE)
+rownames(Data) <- Data[,"ASV"]
+Data[,"Species"] <- paste0("s__", "ASV_", Data[,"ASV"])
+Data <- Data[,-8]
+
+Metadata <- read.csv("DATA/METADATA.csv", sep = ";", dec = ".", header = TRUE)
+
+# Normalisation of the ASV counts with the GMPR method 
+Size_factors <- GMPR(as.data.frame(t(Data[,8:94])))
+Data[,8:94] <- t(t(Data[,8:94])/Size_factors)
+
+Data <- Data %>% unite(Taxonomy, 1:7, sep = ";", remove = FALSE)
+
+taxmap <- parse_tax_data(Data[,c(1,9:95)], class_cols = "Taxonomy", class_sep = ";")
+
+# Add Metadata in the taxmap environment
+taxmap$data$Metadata <- Metadata
+
+# Calculate the abundances for each taxa
+taxmap$data$Abundance <- calc_taxon_abund(taxmap, "tax_data")
+
+# Calculate the mean abundances for each antagonistic group
+taxmap$data$Abundance_mean <- calc_group_mean(taxmap, "Abundance", cols = Metadata$Samples, groups = Metadata$Disease)
+
+# Calculate the differences between the two groups 
+taxmap$data$Difference_table <- compare_groups(taxmap, "Abundance", cols = Metadata$Samples, groups = Metadata$Disease)
+
+# Performe a Wilcoxon-Mann-Whitney test with a FDR adjustment of the p-value
+taxmap <- mutate_obs(taxmap, "Difference_table", wilcox_p_value = p.adjust(wilcox_p_value, method = "fdr"))
+
+# The two data frames will be pooled to know which taxa correspond to the code given by metacoder
+Difference_table <- taxmap$data$Difference_table
+Taxa <- taxmap$data$tax_data
+
+# Pool of the data
+Data <- right_join(Data, Taxa[,1:2], by = "Taxonomy")
+Results <- right_join(Data[,c(7,8,96)], Difference_table, by = "taxon_id")
+Results <- Results[-grep("TRUE", is.na(Results[,"Species"])),]
+
+# Keep one row by genus 
+Results <- Results %>% distinct(taxon_id, Genus, Species, treatment_1, treatment_2, log2_median_ratio, median_diff, mean_diff, wilcox_p_value)
+
+# Remove the metacoder taxonomy
+Results[,"Species"] <- gsub("^s__", "", Results[,"Species"])
+Results[,"Genus"] <- gsub("^g__", "", Results[,"Genus"])
+
+write.csv(Results, file = "DATA/ENRICHMENT_ANALYSIS_RESULTS.csv")
+
+
+
+#### TITAN ANALYSIS ####
+
+Data <- read.csv("DATA/ASV_TABLE.csv", sep = ";", dec = ".", header = TRUE)
+Data[,"Species"] <- paste0(Data[,"Genus"], " ASV_", Data[,"ASV"])
+Data[,"Species"] <- gsub("^g__", "", Data[,"Species"])
+Data[,"ASV"] <- paste0("ASV_", Data[,"ASV"])
+rownames(Data) <- Data[,"Species"]
+Data <- Data[,-1:-8]
+
+Filter <- grep("TRUE",  rowSums(Data[,0:87] > 0) >= 3)
+Data <- Data[Filter,]
+Data <- as.data.frame(t(Data))
+
+# Create a data frame with only the field incidence column 
+Metadata <- read.csv("DATA/METADATA.csv", sep = ";", dec = ".", header = TRUE)
+Env <- as.data.frame(Metadata[,"Incidence"])
+rownames(Env) <- Metadata[,"Samples"]
+Env <- setnames(Env, old = 1, new = "Incidence")
+
+# TITAN with 1000 permutations and 500 bootstraps
+Titan <- titan(env = Env, txa = Data, numPerm = 1000, nBoot = 500, ncpus = 6)
+
+# Only keep the decreaser ASVs, meaning their abundances decrease with the disease incidence in fields
+Titan <- Titan[["sppmax"]]
+Decreasers <- as.data.frame(Titan[grep("TRUE", Titan[,"filter"] == 1),])
+
+Decreasers[,"Species"] <- rownames(Decreasers)
+
+write.csv(Decreasers, DATA/DECREASING_ASVs.csv")
+
+
+
+#### FIGURE 5 ####
+
+### METACODER RESULTS
+## Count number
+
+Data <- read.csv("DATA/ASV_TABLE.csv", sep = ";", dec = ".", header = TRUE)
+Data[,"Species"] <- paste0(Data[,"Genus"], " ASV_", Data[,"ASV"])
+Data[,"Species"] <- gsub("^g__", "", Data[,"Species"])
+Data[,"ASV"] <- paste0("ASV_", Data[,"ASV"])
+
+Metadata <- read.csv("DATA/METADATA.csv", sep = ";", dec = ".", header = TRUE)
+
+Enriched <- read.csv("DATA/ENRICHMENT_ANALYSIS_RESULTS.csv", sep = ",", dec = ".", header = TRUE, row.names = 1)
+
+# Only keep the ASVs significantly enriched
+Enriched <- Enriched[grep("TRUE", Enriched[,"wilcox_p_value"] < 0.05),]
+Enriched[,"Species"] <- paste0(Enriched[,"Genus"], " ", Enriched[,"Species"])
+
+# The sequences of these 'identified' Bacillus corresponded to Priestia following a blast
+Enriched[,"Species"] <- gsub("Bacillus ASV_17481", "Priestia ASV_17481", Enriched[,"Species"])
+Enriched[,"Species"] <- gsub("Bacillus ASV_17483", "Priestia ASV_17483", Enriched[,"Species"])
+
+# Merge the two data frames
+Results <- merge(Data, Enriched, by = "Species")
+Results[,"Species"] <- gsub("Bacillus", "<i>Bacillus</i>", Results[,"Species"])
+Results[,"Species"] <- gsub("Kosakonia", "<i>Kosakonia</i>", Results[,"Species"])
+Results[,"Species"] <- gsub("Priestia", "<i>Priestia</i>", Results[,"Species"])
+
+rownames(Results) <- Results[,"Species"]
+Results <- as.data.frame(t(Results))
+
+Results <- Results[-1:-8,]
+Results <- Results[-88:-95,]
+
+Results[,"Samples"] <- rownames(Results)
+Results[,"Disease"] <- Metadata[,"Disease"]
+Results[,"Site"] <- Metadata[,"Site"]
+
+Results <- Results %>% pivot_longer(cols = 1:6, names_to = "Species", values_to = "Count")
+Results <- as.data.frame(Results)
+Results[,"Count"] <- as.numeric(Results[,"Count"])
+Results[,"Count"] <- log10(Results[,"Count"])
+Results[grep("-Inf", Results[,"Count"]),"Count"] <- 0
+
+# These steps allow to plot the count means in the Diseased and Healthy fields in the Figure 5A
+Means <- data.frame(matrix(nrow = 6, ncol = 3))
+colnames(Means) <- c("Species", "Healthy", "Diseased")
+rownames(Means) <- c("<i>Priestia</i> ASV_17483", "<i>Bacillus</i> ASV_17596", "<i>Bacillus</i> ASV_17495", "<i>Kosakonia</i> ASV_5745", "<i>Priestia</i> ASV_17471", "<i>Priestia</i> ASV_17481")
+Means[,"Species"] <- rownames(Means)
+rownames(Means) <- 1:6
+
+P17483 <- Results[grep("<i>Priestia</i> ASV_17483", Results[,"Species"]),]
+Means[grep("<i>Priestia</i> ASV_17483", Means[,"Species"]),"Healthy"] <- mean(P17483[grep("Healthy", P17483[,"Disease"]), "Count"])
+Means[grep("<i>Priestia</i> ASV_17483", Means[,"Species"]),"Diseased"] <- mean(P17483[grep("Diseased", P17483[,"Disease"]), "Count"])
+
+B17596 <- Results[grep("<i>Bacillus</i> ASV_17596", Results[,"Species"]),]
+Means[grep("<i>Bacillus</i> ASV_17596", Means[,"Species"]),"Healthy"] <- mean(B17596[grep("Healthy", B17596[,"Disease"]), "Count"])
+Means[grep("<i>Bacillus</i> ASV_17596", Means[,"Species"]),"Diseased"] <- mean(B17596[grep("Diseased", B17596[,"Disease"]), "Count"])
+
+B17495 <- Results[grep("<i>Bacillus</i> ASV_17495", Results[,"Species"]),]
+Means[grep("<i>Bacillus</i> ASV_17495", Means[,"Species"]),"Healthy"] <- mean(B17495[grep("Healthy", B17495[,"Disease"]), "Count"])
+Means[grep("<i>Bacillus</i> ASV_17495", Means[,"Species"]),"Diseased"] <- mean(B17495[grep("Diseased", B17495[,"Disease"]), "Count"])
+
+K5745 <- Results[grep("<i>Kosakonia</i> ASV_5745", Results[,"Species"]),]
+Means[grep("<i>Kosakonia</i> ASV_5745", Means[,"Species"]),"Healthy"] <- mean(K5745[grep("Healthy", K5745[,"Disease"]), "Count"])
+Means[grep("<i>Kosakonia</i> ASV_5745", Means[,"Species"]),"Diseased"] <- mean(K5745[grep("Diseased", K5745[,"Disease"]), "Count"])
+
+P17471 <- Results[grep("<i>Priestia</i> ASV_17471", Results[,"Species"]),]
+Means[grep("<i>Priestia</i> ASV_17471", Means[,"Species"]),"Healthy"] <- mean(P17471[grep("Healthy", P17471[,"Disease"]), "Count"])
+Means[grep("<i>Priestia</i> ASV_17471", Means[,"Species"]),"Diseased"] <- mean(P17471[grep("Diseased", P17471[,"Disease"]), "Count"])
+
+P17481 <- Results[grep("<i>Priestia</i> ASV_17481", Results[,"Species"]),]
+Means[grep("<i>Priestia</i> ASV_17481", Means[,"Species"]),"Healthy"] <- mean(P17481[grep("Healthy", P17481[,"Disease"]), "Count"])
+Means[grep("<i>Priestia</i> ASV_17481", Means[,"Species"]),"Diseased"] <- mean(P17481[grep("Diseased", P17481[,"Disease"]), "Count"])
+
+Means <- Means %>% pivot_longer(cols = 2:3, names_to = "Disease", values_to = "Means")
+Means <- as.data.frame(Means)
+Means[,"Means"] <- as.numeric(Means[,"Means"])
+
+Order <- c("<i>Priestia</i> ASV_17483", "<i>Bacillus</i> ASV_17596",  "<i>Bacillus</i> ASV_17495", "<i>Kosakonia</i> ASV_5745", "<i>Priestia</i> ASV_17471", "<i>Priestia</i> ASV_17481")
+
+Point <- c("orangered", "steelblue")
+Cross <- c("orangered4", "steelblue4")
+
+Shapes <- c(21,21,21,21)
+
+# Figure 5A
+p1 <- ggplot(Results)+
+  geom_point(aes(y = fct_relevel(Species, Order), x = Count, color = Disease, fill = Disease, shape = Site), alpha = 0.25, size = 3.5)+
+  scale_color_manual("Disease", values = Point, name = "", guide = "none")+
+  scale_fill_manual("Disease", values = Point, name = "", guide = "none")+
+  scale_shape_manual("Site", values = Shapes, name = "", guide = "none")+
+  new_scale_color()+
+  geom_point(data = Means, aes(y = fct_relevel(Species, Order), x = Means, color = Disease), shape = "+", size = 7)+
+  scale_color_manual("Disease", values = Cross, name = "", guide = "none")+
+  xlab("Log10(Number of reads)")+
+  scale_x_continuous(limits = c(0, 3), breaks = seq(0, 3, 0.5))+
+  theme_bw()+
+  theme(axis.title.y = element_blank(), axis.text.y = element_markdown(size = 12), axis.title.x = element_text(size = 12), axis.text.x = element_text(size = 12))
+p1
+
+## Mean difference
+
+Data <- read.csv("DATA/ASV_TABLE.csv", sep = ";", dec = ".", header = TRUE)
+Data[,"Species"] <- paste0(Data[,"Genus"], " ASV_", Data[,"ASV"])
+Data[,"Species"] <- gsub("^g__", "", Data[,"Species"])
+Data[,"ASV"] <- paste0("ASV_", Data[,"ASV"])
+
+# Only keep the significantly enriched ASVs
+Enriched <- read.csv("DATA/ENRICHMENT_ANALYSIS_RESULTS.csv", sep = ",", dec = ".", header = TRUE, row.names = 1)
+Enriched <- Enriched[grep("TRUE", Enriched[,"wilcox_p_value"] < 0.05),]
+Enriched[,"Species"] <- paste0(Enriched[,"Genus"], " ", Enriched[,"Species"])
+
+Enriched[,"Species"] <- gsub("Bacillus ASV_17481", "Priestia ASV_17481", Enriched[,"Species"])
+Enriched[,"Species"] <- gsub("Bacillus ASV_17483", "Priestia ASV_17483", Enriched[,"Species"])
+
+Results <- merge(Data, Enriched, by = "Species")
+Results[,"Species"] <- gsub("Bacillus", "<i>Bacillus</i>", Results[,"Species"])
+Results[,"Species"] <- gsub("Kosakonia", "<i>Kosakonia</i>", Results[,"Species"])
+Results[,"Species"] <- gsub("Priestia", "<i>Priestia</i>", Results[,"Species"])
+
+# Figure 5B
+p2 <- ggplot(Results)+
+  geom_col(aes(x = mean_diff, y = reorder(Species, mean_diff)), fill = "steelblue")+
+  xlab("Mean difference")+
+  scale_x_continuous(limits = c(0, 150), breaks = seq(0, 150, 50))+
+  theme_bw()+
+  theme(axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.title.x = element_text(size = 12), axis.text.x = element_text(size = 12), legend.text = element_text(size = 12))
+p2
+
+
+### TITAN
+
+# Allows to plot the distribution of the count abundance depending on the disease incidence in fields
+Data <- read.csv("DATA/ASV_TABLE.csv", sep = ";", dec = ".", header = TRUE)
+Data[,"Species"] <- paste0(Data[,"Genus"], " ASV_", Data[,"ASV"])
+Data[,"Species"] <- gsub("^g__", "", Data[,"Species"])
+Data[,"ASV"] <- paste0("ASV_", Data[,"ASV"])
+rownames(Data) <- Data[,"Species"]
+Data <- Data[,-1:-8]
+
+Metadata <- read.csv("DATA/METADATA.csv", sep = ";", dec = ".", header = TRUE)
+Env <- as.data.frame(Metadata[,c("Incidence", "Disease", "Site")])
+rownames(Env) <- Metadata[,"Samples"]
+Env <- setnames(Env, old = 1, new = "Incidence")
+
+Data["Incidence",] <- Env[,"Incidence"]
+Data["Disease",] <- Env[,"Disease"]
+Data["Site",] <- Env[,"Site"]
+Data <- as.data.frame(t(Data))
+
+P17483 <- Data[,c("Priestia ASV_17483", "Incidence", "Disease", "Site")]
+B17596 <- Data[,c("Bacillus ASV_17596", "Incidence", "Disease", "Site")]
+B17495 <- Data[,c("Bacillus ASV_17495", "Incidence", "Disease", "Site")]
+K5745 <-Data[,c("Kosakonia ASV_5745", "Incidence", "Disease", "Site")]
+P17471 <- Data[,c("Priestia ASV_17471", "Incidence", "Disease", "Site")]
+P17481 <- Data[,c("Priestia ASV_17481",  "Incidence", "Disease", "Site")]
+
+Colors <- c("orangered", "steelblue")
+Shapes <- c(21,22,24,25)
+
+# Figure 5C
+p8 <- ggplot(P17483, aes(x = as.numeric(P17483$Incidence), y = as.numeric(P17483$`Priestia ASV_17483`)))+
+  geom_point(aes(color = P17483$Disease, shape = P17483$Site, fill = P17483$Disease), alpha = 0.75, size = 2)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  scale_shape_manual("Site", values = Shapes, name = "Sampling site")+
+  stat_smooth(color = "grey", size = 1, method = "lm", se = FALSE)+
+  stat_regline_equation()+
+  ggtitle("<i>Priestia</i> ASV_17483")+
+  ylab("Number of reads")+
+  xlab("Disease incidence")+
+  scale_y_continuous(limits = c(0, 30), breaks = seq(0, 30, 10))+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold"), axis.title.y = element_blank(), axis.text.y = element_text(size = 12), axis.title.x = element_text(size = 12), axis.text.x = element_text(size = 12), legend.text = element_text(size = 12), legend.title = element_text(size = 12, face = "bold"))
+p8
+
+p7 <- ggplot(B17596, aes(x = as.numeric(B17596$Incidence), y = as.numeric(B17596$`Bacillus ASV_17596`)))+
+  geom_point(aes(color = B17596$Disease, fill = B17596$Disease, shape = B17596$Site), alpha = 0.75, size = 2)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  scale_shape_manual("Site", values = Shapes, name = "Sampling site")+
+  stat_smooth(color = "grey", size = 1, method = "lm", se = FALSE)+
+  stat_regline_equation()+
+  ggtitle("<i>Bacillus</i> ASV_17596")+
+  ylab("Number of reads")+
+  xlab("Disease incidence")+
+  scale_y_continuous(limits = c(0, 60), breaks = seq(0, 60, 20))+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold"), axis.title.y = element_blank(), axis.text.y = element_text(size = 12), axis.title.x = element_text(size = 12), axis.text.x = element_text(size = 12), legend.text = element_text(size = 12), legend.title = element_text(size = 12, face = "bold"))
+p7
+
+p6 <- ggplot(B17495, aes(x = as.numeric(B17495$Incidence), y = as.numeric(B17495$`Bacillus ASV_17495`)))+
+  geom_point(aes(color = B17495$Disease, fill = B17495$Disease, shape = B17495$Site), alpha = 0.75, size = 2)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  scale_shape_manual("Site", values = Shapes, name = "Sampling site")+
+  stat_smooth(color = "grey", size = 1, method = "lm", se = FALSE)+
+  stat_regline_equation()+
+  ggtitle("<i>Bacillus</i> ASV_17495")+
+  ylab("Number of reads")+
+  xlab("Disease incidence")+
+  scale_y_continuous(limits = c(0, 600), breaks = seq(0, 600, 200))+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold"), axis.title.y = element_text(size = 12, vjust = -35), axis.text.y = element_text(size = 12), axis.title.x = element_text(size = 12), axis.text.x = element_text(size = 12), legend.text = element_text(size = 12), legend.title = element_text(size = 12, face = "bold"))
+p6
+
+p5 <- ggplot(K5745,aes(x = as.numeric(K5745$Incidence), y = as.numeric(K5745$`Kosakonia ASV_5745`)))+
+  geom_point(aes(color = K5745$Disease, fill = K5745$Disease, shape = K5745$Site), alpha = 0.75, size = 2)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  scale_shape_manual("Site", values = Shapes, name = "Sampling site")+
+  stat_smooth(color = "grey", size = 1, method = "lm", se = FALSE)+
+  stat_regline_equation()+
+  ggtitle("<i>Kosakonia</i> ASV_5745")+
+  ylab("Number of reads")+
+  xlab("Disease incidence")+
+  scale_y_continuous(limits = c(0, 500), breaks = seq(0, 500, 125))+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold"), axis.title.y = element_blank(), axis.text.y = element_text(size = 12), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12), legend.title = element_text(size = 12, face = "bold"))
+p5
+
+p4 <- ggplot(P17471, aes(x = as.numeric(P17471$Incidence), y = as.numeric(P17471$`Priestia ASV_17471`)))+
+  geom_point(aes(color = P17471$Disease, fill = P17471$Disease, shape = P17471$Site), alpha = 0.75, size = 2)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  scale_shape_manual("Site", values = Shapes, name = "Sampling site")+
+  stat_smooth(color = "grey", size = 1, method = "lm", se = FALSE)+
+  stat_regline_equation()+
+  ggtitle("<i>Priestia</i> ASV_17471")+
+  ylab("Number of reads")+
+  xlab("Disease incidence")+
+  scale_y_continuous(limits = c(0, 1000), breaks = seq(0, 1000, 250))+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold"), axis.title.y = element_blank(), axis.text.y = element_text(size = 12), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12), legend.title = element_text(size = 12, face = "bold"))
+
+p3 <- ggplot(P17481, aes(x = as.numeric(P17481 $Incidence), y = as.numeric(P17481 $`Priestia ASV_17481`)))+
+  geom_point(aes(color = P17481$Disease, fill = P17481$Disease, shape = P17481$Site), alpha = 0.75, size = 2)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  scale_shape_manual("Site", values = Shapes, name = "Sampling site")+
+  stat_smooth(color = "grey", size = 1, method = "lm", se = FALSE)+
+  stat_regline_equation()+
+  ggtitle("<i>Priestia</i> ASV_17481")+
+  ylab("Number of reads")+
+  xlab("Disease incidence")+
+  scale_y_continuous(limits = c(0, 1000), breaks = seq(0, 1000, 250))+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold"), axis.title.y = element_text(size = 12, vjust = -35), axis.text.y = element_text(size = 12), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12), legend.title = element_text(size = 12, face = "bold"))
+
+Model <- "AAB
+AAB
+AAB
+CDE
+CDE
+FGH
+FGH"
+
+p10 <- p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + plot_layout(design = Model, guides = "collect")
+p10
+
+#ggsave(plot = p10, dpi = 1000, device = "jpeg", width = 12, height = 8, filename = "FIGURES/FIGURE_5.jpeg")
