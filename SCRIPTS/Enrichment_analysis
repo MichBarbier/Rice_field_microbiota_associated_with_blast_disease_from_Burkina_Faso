@@ -12,6 +12,7 @@ setwd("C:/[[YOUR PATH]]/Rice_field_microbiota_associated_with_blast_disease_from
 library("data.table")
 library("ggnewscale")
 library("ggpubr")
+library("ggsignif")
 library("ggtext")
 library("patchwork")
 library("tidyverse")
@@ -367,5 +368,147 @@ FGH"
 p10 <- p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + plot_layout(design = Model, guides = "collect")
 p10
 
-
 ggsave(plot = p10, dpi = 1000, device = "jpeg", width = 12, height = 8, filename = "FIGURES/FIGURE_5.jpeg")
+
+
+
+#### SUPPLEMENTARY FIGURE 5 ####
+
+Data <- read.csv("DATA/ASV_TABLE.csv", sep = ";", dec = ".", header = TRUE)
+Data[,"Species"] <- paste0(Data[,"Genus"], " ASV_", Data[,"ASV"])
+Data[,"Species"] <- gsub("^g__", "", Data[,"Species"])
+Data[,"ASV"] <- paste0("ASV_", Data[,"ASV"])
+
+Metadata <- read.csv("DATA/METADATA.csv", sep = ";", dec = ".", header = TRUE)
+
+Enriched <- read.csv("DATA/ENRICHMENT_ANALYSIS_RESULTS.csv", sep = ",", dec = ".", header = TRUE, row.names = 1)
+Enriched <- Enriched[grep("TRUE", Enriched[,"wilcox_p_value"] < 0.05),]
+Enriched[,"Species"] <- paste0(Enriched[,"Genus"], " ", Enriched[,"Species"])
+
+Enriched[,"Species"] <- gsub("Bacillus ASV_17481", "Priestia ASV_17481", Enriched[,"Species"])
+Enriched[,"Species"] <- gsub("Bacillus ASV_17483", "Priestia ASV_17483", Enriched[,"Species"])
+
+Results <- merge(Data, Enriched, by = "Species")
+Results[,"Species"] <- gsub("Bacillus", "<i>Bacillus</i>", Results[,"Species"])
+Results[,"Species"] <- gsub("Kosakonia", "<i>Kosakonia</i>", Results[,"Species"])
+Results[,"Species"] <- gsub("Priestia", "<i>Priestia</i>", Results[,"Species"])
+
+rownames(Results) <- Results[,"Species"]
+Results <- as.data.frame(t(Results))
+
+Results <- Results[-1:-8,]
+Results <- Results[-88:-95,]
+
+Results[,"Samples"] <- rownames(Results)
+Results[,"Disease"] <- Metadata[,"Disease"]
+
+Results <- Results %>% pivot_longer(cols = 1:6, names_to = "Species", values_to = "Count")
+Results <- as.data.frame(Results)
+Results[,"Count"] <- as.numeric(Results[,"Count"])
+
+P17483 <- Results[grep("<i>Priestia</i> ASV_17483", Results[,"Species"]),]
+B17596 <- Results[grep("<i>Bacillus</i> ASV_17596", Results[,"Species"]),]
+B17495 <- Results[grep("<i>Bacillus</i> ASV_17495", Results[,"Species"]),]
+K5745 <- Results[grep("<i>Kosakonia</i> ASV_5745", Results[,"Species"]),]
+P17471 <- Results[grep("<i>Priestia</i> ASV_17471", Results[,"Species"]),]
+P17481 <- Results[grep("<i>Priestia</i> ASV_17481", Results[,"Species"]),]
+
+Colors <- c("orangered", "steelblue")
+
+p1 <- ggplot(P17481)+
+  geom_boxplot(aes(x = Disease, y = Count, fill = Disease, color = Disease), alpha = 0.5)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  geom_point(aes(x = Disease, y = Count, color = Disease))+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  geom_signif(aes(x = Disease, y = Count), test = wilcox.test, comparisons = list(c("Healthy", "Diseased")), map_signif_level = TRUE, y_position = 1010, textsize = 8)+
+  stat_summary(aes(x =  Disease, y = Count), fun = mean, colour = "black", geom = "point", shape = "+", size = 6.5)+
+  ylab("Number of reads")+
+  scale_y_continuous(limits = c(0, 1200), breaks = seq(0, 1200, 200))+
+  ggtitle("<i>Priestia</i> ASV_17481")+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold", hjust = 0.5), axis.text.y = element_text(size = 12), axis.title.y = element_text(size = 13), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12))
+p1
+
+p2 <- ggplot(P17471)+
+  geom_boxplot(aes(x = Disease, y = Count, fill = Disease, color = Disease), alpha = 0.5)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  geom_point(aes(x = Disease, y = Count, color = Disease))+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  geom_signif(aes(x = Disease, y = Count), test = wilcox.test, comparisons = list(c("Healthy", "Diseased")), map_signif_level = TRUE, y_position = 940, textsize = 8)+
+  stat_summary(aes(x =  Disease, y = Count), fun = mean, colour = "black", geom = "point", shape = "+", size = 6.5)+
+  ylab("Number of reads")+
+  scale_y_continuous(limits = c(0, 1200), breaks = seq(0, 1200, 200))+
+  ggtitle("<i>Priestia</i> ASV_17471")+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold", hjust = 0.5), axis.text.y = element_text(size = 12), axis.title.y = element_blank(), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12))
+p2
+
+p3 <- ggplot(K5745)+
+  geom_boxplot(aes(x = Disease, y = Count, fill = Disease, color = Disease), alpha = 0.5)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  geom_point(aes(x = Disease, y = Count, color = Disease))+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  geom_signif(aes(x = Disease, y = Count), test = wilcox.test, comparisons = list(c("Healthy", "Diseased")), map_signif_level = TRUE, y_position = 455, textsize = 8)+
+  stat_summary(aes(x =  Disease, y = Count), fun = mean, colour = "black", geom = "point", shape = "+", size = 6.5)+
+  ylab("Number of reads")+
+  scale_y_continuous(limits = c(0, 750), breaks = seq(0, 750, 125))+
+  ggtitle("<i>Kosakonia</i> ASV_5745")+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold", hjust = 0.5), axis.text.y = element_text(size = 12), axis.title.y = element_blank(), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12))
+p3
+
+p4 <- ggplot(B17495)+
+  geom_boxplot(aes(x = Disease, y = Count, fill = Disease, color = Disease), alpha = 0.5)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  geom_point(aes(x = Disease, y = Count, color = Disease))+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  geom_signif(aes(x = Disease, y = Count), test = wilcox.test, comparisons = list(c("Healthy", "Diseased")), map_signif_level = TRUE, y_position = 500, textsize = 8)+
+  stat_summary(aes(x =  Disease, y = Count), fun = mean, colour = "black", geom = "point", shape = "+", size = 6.5)+
+  ylab("Number of reads")+
+  scale_y_continuous(limits = c(0, 600), breaks = seq(0, 600, 150))+
+  ggtitle("<i>Bacillus</i> ASV_17495")+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold", hjust = 0.5), axis.text.y = element_text(size = 12), axis.title.y = element_text(size = 13), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12))
+p4
+
+p5 <- ggplot(B17596)+
+  geom_boxplot(aes(x = Disease, y = Count, fill = Disease, color = Disease), alpha = 0.5)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  geom_point(aes(x = Disease, y = Count, color = Disease))+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  geom_signif(aes(x = Disease, y = Count), test = wilcox.test, comparisons = list(c("Healthy", "Diseased")), map_signif_level = TRUE, y_position = 59, textsize = 8)+
+  stat_summary(aes(x =  Disease, y = Count), fun = mean, colour = "black", geom = "point", shape = "+", size = 6.5)+
+  ylab("Number of reads")+
+  scale_y_continuous(limits = c(0, 80), breaks = seq(0, 80, 20))+
+  ggtitle("<i>Bacillus</i> ASV_17596")+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold", hjust = 0.5), axis.text.y = element_text(size = 12), axis.title.y = element_blank(), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12))
+p5
+
+p6 <- ggplot(P17483)+
+  geom_boxplot(aes(x = Disease, y = Count, fill = Disease, color = Disease), alpha = 0.5)+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  scale_fill_manual("Disease", values = Colors, name = "")+
+  geom_point(aes(x = Disease, y = Count, color = Disease))+
+  scale_color_manual("Disease", values = Colors, name = "")+
+  geom_signif(aes(x = Disease, y = Count), test = wilcox.test, comparisons = list(c("Healthy", "Diseased")), map_signif_level = TRUE, y_position = 26, textsize = 8)+
+  stat_summary(aes(x =  Disease, y = Count), fun = mean, colour = "black", geom = "point", shape = "+", size = 6.5)+
+  ylab("Number of reads")+
+  scale_y_continuous(limits = c(0, 40), breaks = seq(0, 40, 10))+
+  ggtitle("<i>Priestia</i> ASV_17483")+
+  theme_bw()+
+  theme(plot.title = element_markdown(size = 13, face = "bold", hjust = 0.5), axis.text.y = element_text(size = 12), axis.title.y = element_blank(), axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 12))
+p6
+
+Model <- "ABC
+DEF"
+
+p10 <- p1 + p2 + p3 + p4 + p5 + p6 + plot_layout(design = Model, guides = "collect")
+p10
+
+ggsave(plot = p10, dpi = 1000, device = "jpeg", width = 8, height = 6, filename = "FIGURES/SUPPLEMENTARY_FIGURE_5.jpeg")
