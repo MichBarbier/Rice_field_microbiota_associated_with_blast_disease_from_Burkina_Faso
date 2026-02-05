@@ -103,7 +103,7 @@ Decreasers <- as.data.frame(Titan[grep("TRUE", Titan[,"filter"] == 1),])
 
 Decreasers[,"Species"] <- rownames(Decreasers)
 
-write.csv(Decreasers, DATA/DECREASING_ASVs.csv")
+write.csv(Decreasers, DATA/DECREASING_ASVs.csv") # Supplementary Table 2
 
 
 
