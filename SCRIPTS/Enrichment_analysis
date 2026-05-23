@@ -17,7 +17,7 @@ library("ggtext")
 library("patchwork")
 library("tidyverse")
 
-library("GMPR") # Allows data normalisation
+library("GMPR") # Allows data normalisation    ---> The GMPR normalisation method is now available with the package : GUniFrac
 library("metacoder") # Allows to calculate the enrichment factor and its significance
 library("TITAN2") # Allows to determine if the distribution of the ASV abundances along an environmental gradient is due to a random effect or not
 
@@ -34,6 +34,11 @@ Metadata <- read.csv("DATA/METADATA.csv", sep = ";", dec = ".", header = TRUE)
 
 # Normalisation of the ASV counts with the GMPR method 
 Size_factors <- GMPR(as.data.frame(t(Data[,8:94])))
+Data[,8:94] <- t(t(Data[,8:94])/Size_factors)
+
+# Noramlisation of the ASV counts with the GMPR method from the package GUniFrac 
+library("GUniFrac")
+Size_factors <- GMPR(Data[,8:94])
 Data[,8:94] <- t(t(Data[,8:94])/Size_factors)
 
 Data <- Data %>% unite(Taxonomy, 1:7, sep = ";", remove = FALSE)
